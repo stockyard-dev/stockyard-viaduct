@@ -1,23 +1,46 @@
 package store
 import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
 type DB struct{db *sql.DB}
-type Proxy struct{
+type Tunnel struct {
 	ID string `json:"id"`
 	Name string `json:"name"`
-	ListenPort int `json:"listen_port"`
-	TargetURL string `json:"target_url"`
-	Enabled string `json:"enabled"`
-	RequestCount int `json:"request_count"`
+	LocalPort int `json:"local_port"`
+	RemoteHost string `json:"remote_host"`
+	RemotePort int `json:"remote_port"`
+	Protocol string `json:"protocol"`
+	Status string `json:"status"`
+	BytesTransferred int `json:"bytes_transferred"`
 	CreatedAt string `json:"created_at"`
 }
 func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"viaduct.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
-db.Exec(`CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL,listen_port INTEGER DEFAULT 0,target_url TEXT DEFAULT '',enabled TEXT DEFAULT 'true',request_count INTEGER DEFAULT 0,created_at TEXT DEFAULT(datetime('now')))`)
+db.Exec(`CREATE TABLE IF NOT EXISTS tunnels(id TEXT PRIMARY KEY,name TEXT NOT NULL,local_port INTEGER DEFAULT 0,remote_host TEXT DEFAULT '',remote_port INTEGER DEFAULT 0,protocol TEXT DEFAULT 'tcp',status TEXT DEFAULT 'active',bytes_transferred INTEGER DEFAULT 0,created_at TEXT DEFAULT(datetime('now')))`)
 return &DB{db:db},nil}
 func(d *DB)Close()error{return d.db.Close()}
 func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
 func now()string{return time.Now().UTC().Format(time.RFC3339)}
-func(d *DB)Create(e *Proxy)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO proxies(id,name,listen_port,target_url,enabled,request_count,created_at)VALUES(?,?,?,?,?,?,?)`,e.ID,e.Name,e.ListenPort,e.TargetURL,e.Enabled,e.RequestCount,e.CreatedAt);return err}
-func(d *DB)Get(id string)*Proxy{var e Proxy;if d.db.QueryRow(`SELECT id,name,listen_port,target_url,enabled,request_count,created_at FROM proxies WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.ListenPort,&e.TargetURL,&e.Enabled,&e.RequestCount,&e.CreatedAt)!=nil{return nil};return &e}
-func(d *DB)List()[]Proxy{rows,_:=d.db.Query(`SELECT id,name,listen_port,target_url,enabled,request_count,created_at FROM proxies ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Proxy;for rows.Next(){var e Proxy;rows.Scan(&e.ID,&e.Name,&e.ListenPort,&e.TargetURL,&e.Enabled,&e.RequestCount,&e.CreatedAt);o=append(o,e)};return o}
-func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM proxies WHERE id=?`,id);return err}
-func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM proxies`).Scan(&n);return n}
+func(d *DB)Create(e *Tunnel)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO tunnels(id,name,local_port,remote_host,remote_port,protocol,status,bytes_transferred,created_at)VALUES(?,?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.LocalPort,e.RemoteHost,e.RemotePort,e.Protocol,e.Status,e.BytesTransferred,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Tunnel{var e Tunnel;if d.db.QueryRow(`SELECT id,name,local_port,remote_host,remote_port,protocol,status,bytes_transferred,created_at FROM tunnels WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.LocalPort,&e.RemoteHost,&e.RemotePort,&e.Protocol,&e.Status,&e.BytesTransferred,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Tunnel{rows,_:=d.db.Query(`SELECT id,name,local_port,remote_host,remote_port,protocol,status,bytes_transferred,created_at FROM tunnels ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Tunnel;for rows.Next(){var e Tunnel;rows.Scan(&e.ID,&e.Name,&e.LocalPort,&e.RemoteHost,&e.RemotePort,&e.Protocol,&e.Status,&e.BytesTransferred,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Update(e *Tunnel)error{_,err:=d.db.Exec(`UPDATE tunnels SET name=?,local_port=?,remote_host=?,remote_port=?,protocol=?,status=?,bytes_transferred=? WHERE id=?`,e.Name,e.LocalPort,e.RemoteHost,e.RemotePort,e.Protocol,e.Status,e.BytesTransferred,e.ID);return err}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM tunnels WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM tunnels`).Scan(&n);return n}
+
+func(d *DB)Search(q string, filters map[string]string)[]Tunnel{
+    where:="1=1"
+    args:=[]any{}
+    if q!=""{
+        where+=" AND (name LIKE ?)"
+        args=append(args,"%"+q+"%");
+    }
+    if v,ok:=filters["status"];ok&&v!=""{where+=" AND status=?";args=append(args,v)}
+    rows,_:=d.db.Query(`SELECT id,name,local_port,remote_host,remote_port,protocol,status,bytes_transferred,created_at FROM tunnels WHERE `+where+` ORDER BY created_at DESC`,args...)
+    if rows==nil{return nil};defer rows.Close()
+    var o []Tunnel;for rows.Next(){var e Tunnel;rows.Scan(&e.ID,&e.Name,&e.LocalPort,&e.RemoteHost,&e.RemotePort,&e.Protocol,&e.Status,&e.BytesTransferred,&e.CreatedAt);o=append(o,e)};return o
+}
+
+func(d *DB)Stats()map[string]any{
+    m:=map[string]any{"total":d.Count()}
+    rows,_:=d.db.Query(`SELECT status,COUNT(*) FROM tunnels GROUP BY status`)
+    if rows!=nil{defer rows.Close();by:=map[string]int{};for rows.Next(){var s string;var c int;rows.Scan(&s,&c);by[s]=c};m["by_status"]=by}
+    return m
+}
