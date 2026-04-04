@@ -33,6 +33,7 @@ patch.Name=existing.Name};if patch.RemoteHost==""{
 patch.RemoteHost=existing.RemoteHost};if patch.Protocol==""{
 patch.Protocol=existing.Protocol};if patch.Status==""{
 patch.Status=existing.Status}
+    if patch.LocalPort==0{patch.LocalPort=existing.LocalPort};if patch.RemotePort==0{patch.RemotePort=existing.RemotePort};if patch.BytesTransferred==0{patch.BytesTransferred=existing.BytesTransferred}
     s.db.Update(&patch);wj(w,200,s.db.Get(patch.ID))
 }
 func(s *Server)del(w http.ResponseWriter,r *http.Request){s.db.Delete(r.PathValue("id"));wj(w,200,map[string]string{"deleted":"ok"})}
